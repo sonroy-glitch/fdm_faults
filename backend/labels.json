@@ -1,5 +1,5 @@
 {
-  "comment": "Index order must match the training label order. Taken from the dataset's class directories (FDM-3D-Printing-Defect-Dataset/data), sorted alphabetically -- which is what torchvision ImageFolder does. ImageFolder also ignores the stray .DS_Store file, consistent with the model having exactly 5 outputs.",
+  "comment": "Index order matches the training label order, confirmed by the project owner. Taken from the dataset's class directories (FDM-3D-Printing-Defect-Dataset/data) sorted alphabetically, which is what torchvision ImageFolder does. `classes` is what the API and UI display; `source_folders_sorted` is the original directory name at the same index.",
   "source_folders_sorted": [
     "Cracking",
     "Layer_shifting",
@@ -16,7 +16,15 @@
   ],
   "preprocessing": {
     "input_size": 128,
-    "mean": [0.0, 0.0, 0.0],
-    "std": [1.0, 1.0, 1.0]
+    "mean": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "std": [
+      1.0,
+      1.0,
+      1.0
+    ]
   }
 }
