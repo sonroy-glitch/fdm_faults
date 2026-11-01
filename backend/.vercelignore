@@ -1,0 +1,6 @@
+# Keep the torch checkpoint out of the serverless bundle; only the ONNX graph ships.
+models/model.pkl
+requirements.txt
+requirements-dev.txt
+scripts/
+__pycache__/

@@ -1,0 +1,15 @@
+{
+  "comment": "Order MUST match the training label order (index 0 -> first output unit). Replace `classes` with the exact names from the training set.",
+  "classes": [
+    "Blobs",
+    "Cracks",
+    "Spaghetti",
+    "Stringing",
+    "Under-extrusion"
+  ],
+  "preprocessing": {
+    "input_size": 128,
+    "mean": [0.0, 0.0, 0.0],
+    "std": [1.0, 1.0, 1.0]
+  }
+}
