@@ -1,11 +1,18 @@
 {
-  "comment": "Order MUST match the training label order (index 0 -> first output unit). Replace `classes` with the exact names from the training set.",
-  "classes": [
-    "Blobs",
-    "Cracks",
-    "Spaghetti",
+  "comment": "Index order must match the training label order. Taken from the dataset's class directories (FDM-3D-Printing-Defect-Dataset/data), sorted alphabetically -- which is what torchvision ImageFolder does. ImageFolder also ignores the stray .DS_Store file, consistent with the model having exactly 5 outputs.",
+  "source_folders_sorted": [
+    "Cracking",
+    "Layer_shifting",
+    "Off_platform",
     "Stringing",
-    "Under-extrusion"
+    "Warping"
+  ],
+  "classes": [
+    "Cracking",
+    "Layer shifting",
+    "Off platform",
+    "Stringing",
+    "Warping"
   ],
   "preprocessing": {
     "input_size": 128,
