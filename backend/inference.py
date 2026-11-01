@@ -1,89 +1,72 @@
-"""Image preprocessing plus the two interchangeable inference engines.
+"""RandomForest inference.
 
-Preprocessing is deliberately numpy/Pillow only (no torchvision) so the ONNX
-deployment stays small enough for a serverless function.
+models/model.pkl is a dict:
+
+    {"model": RandomForestClassifier, "label_map": {name: index}, "img_size": 128}
+
+The embedded `label_map` is authoritative for class ordering, so it is used to
+build the label list and is cross-checked against labels.json at load time.
 """
 
-import io
-import os
 import threading
 
 import numpy as np
-from PIL import Image
 
 import config
+import features
 from config import load_labels
 
 
-def preprocess(image_bytes: bytes) -> np.ndarray:
-    """bytes -> float32 NCHW batch of 1, matching the training transform."""
-    meta = load_labels()
-    size = meta["input_size"]
-
-    with Image.open(io.BytesIO(image_bytes)) as im:
-        im = im.convert("RGB").resize((size, size), Image.BILINEAR)
-        arr = np.asarray(im, dtype=np.float32) / 255.0
-
-    mean = np.asarray(meta["mean"], dtype=np.float32).reshape(1, 1, 3)
-    std = np.asarray(meta["std"], dtype=np.float32).reshape(1, 1, 3)
-    arr = (arr - mean) / std
-
-    return np.ascontiguousarray(arr.transpose(2, 0, 1)[None, ...])
-
-
-def softmax(logits: np.ndarray) -> np.ndarray:
-    z = logits - logits.max(axis=-1, keepdims=True)
-    e = np.exp(z)
-    return e / e.sum(axis=-1, keepdims=True)
-
-
-class TorchEngine:
-    name = "torch"
+class RandomForestEngine:
+    name = "randomforest"
 
     def __init__(self, model_path):
         import pickle
 
-        import torch
-
-        import model_def
-
-        # One thread: the model is small, and on a shared 512 MB free-tier
-        # instance extra BLAS threads cost memory without helping latency.
-        torch.set_num_threads(int(os.environ.get("TORCH_NUM_THREADS", "1")))
-
-        model_def.register_for_unpickling()
         with open(model_path, "rb") as f:
-            model = pickle.load(f)
+            payload = pickle.load(f)
 
-        self._torch = torch
-        self.model = model.eval()
+        if not isinstance(payload, dict) or "model" not in payload:
+            raise ValueError(
+                f"expected a dict with a 'model' key in {model_path}, "
+                f"got {type(payload).__name__}"
+            )
+
+        self.model = payload["model"]
+        self.img_size = int(payload.get("img_size", load_labels()["input_size"]))
         self.model_path = str(model_path)
 
-    def logits(self, batch: np.ndarray) -> np.ndarray:
-        torch = self._torch
-        with torch.inference_mode():
-            out = self.model(torch.from_numpy(batch))
-        return out.detach().cpu().numpy()
+        # The forest was pickled with n_jobs=-1, which fans out over every core.
+        # On a shared free-tier instance that costs memory and context switching
+        # without helping a single-image predict, so pin it.
+        self.model.n_jobs = config.N_JOBS
 
+        # Order the names by the index the model was trained against.
+        label_map = payload.get("label_map") or {}
+        if label_map:
+            self.classes = [
+                name for name, _ in sorted(label_map.items(), key=lambda kv: kv[1])
+            ]
+        else:
+            self.classes = load_labels()["classes"]
 
-class OnnxEngine:
-    name = "onnx"
+        expected = getattr(self.model, "n_features_in_", None)
+        if expected is not None and expected != features.EXPECTED_LENGTH:
+            raise ValueError(
+                f"model expects {expected} features but the extractor produces "
+                f"{features.EXPECTED_LENGTH}; feature settings do not match training"
+            )
 
-    def __init__(self, model_path):
-        import onnxruntime as ort
-
-        so = ort.SessionOptions()
-        so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-        # One thread keeps memory and cold-start predictable on serverless.
-        so.intra_op_num_threads = 1
-        self.session = ort.InferenceSession(
-            str(model_path), sess_options=so, providers=["CPUExecutionProvider"]
+    def probabilities(self, image_bytes: bytes) -> np.ndarray:
+        x = features.extract(
+            image_bytes, size=self.img_size, channel_order=config.CHANNEL_ORDER
         )
-        self.input_name = self.session.get_inputs()[0].name
-        self.model_path = str(model_path)
+        probs = self.model.predict_proba(x)[0]
 
-    def logits(self, batch: np.ndarray) -> np.ndarray:
-        return self.session.run(None, {self.input_name: batch})[0]
+        # predict_proba columns follow model.classes_, which here are the
+        # integer indices; reorder defensively in case they are not 0..n-1.
+        order = np.argsort(np.asarray(self.model.classes_))
+        return probs[order]
 
 
 _engine = None
@@ -92,33 +75,16 @@ _lock = threading.Lock()
 
 
 def _build_engine():
-    requested = config.ENGINE
-    onnx_path = config.first_existing(config.ONNX_SEARCH_PATHS)
-    torch_path = config.first_existing(config.MODEL_SEARCH_PATHS)
-
-    if requested == "onnx":
-        order = [("onnx", onnx_path)]
-    elif requested == "torch":
-        order = [("torch", torch_path)]
-    else:
-        # torch first: the pickle is the source of truth, ONNX is the fallback.
-        order = [("torch", torch_path), ("onnx", onnx_path)]
-
-    errors = []
-    for kind, path in order:
-        if path is None:
-            errors.append(f"{kind}: model file not found")
-            continue
-        try:
-            return (OnnxEngine if kind == "onnx" else TorchEngine)(path)
-        except Exception as exc:  # noqa: BLE001 - reported to the caller
-            errors.append(f"{kind}: {type(exc).__name__}: {exc}")
-
-    raise RuntimeError("no usable inference engine (" + "; ".join(errors) + ")")
+    path = config.first_existing(config.MODEL_SEARCH_PATHS)
+    if path is None:
+        raise RuntimeError(
+            "model.pkl not found in " + ", ".join(str(p) for p in config.MODEL_SEARCH_PATHS)
+        )
+    return RandomForestEngine(path)
 
 
 def get_engine():
-    """Lazily build the engine once; cache the failure so we don't retry per request."""
+    """Build the engine once; cache a failure so it is not retried per request."""
     global _engine, _engine_error
     if _engine is not None:
         return _engine
@@ -135,13 +101,20 @@ def get_engine():
     return _engine
 
 
+def class_names():
+    """Display names, preferring labels.json when it lines up with the model."""
+    engine = get_engine()
+    configured = load_labels()["classes"]
+    return configured if len(configured) == len(engine.classes) else engine.classes
+
+
 def predict(image_bytes: bytes) -> dict:
     engine = get_engine()
-    probs = softmax(engine.logits(preprocess(image_bytes)))[0]
-    classes = load_labels()["classes"]
+    probs = engine.probabilities(image_bytes)
+    names = class_names()
 
     ranked = sorted(
-        ({"label": c, "confidence": float(p)} for c, p in zip(classes, probs)),
+        ({"label": c, "confidence": float(p)} for c, p in zip(names, probs)),
         key=lambda d: d["confidence"],
         reverse=True,
     )

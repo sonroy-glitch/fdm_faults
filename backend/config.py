@@ -15,17 +15,18 @@ MODEL_SEARCH_PATHS = [
     REPO_DIR / "models" / "model.pkl",
 ]
 
-ONNX_SEARCH_PATHS = [
-    Path(p) for p in (os.environ.get("ONNX_MODEL_PATH", ""),) if p
-] + [
-    BASE_DIR / "models" / "model.onnx",
-    REPO_DIR / "models" / "model.onnx",
-]
+# Colour-channel order used when binning the colour histogram at training time.
+# OpenCV reads images as BGR; PIL and skimage read RGB. Only the histogram block
+# is affected. See features.py.
+def _default_channel_order() -> str:
+    try:
+        return load_labels()["channel_order"]
+    except Exception:
+        return "bgr"
 
-# "torch" (the default: runs models/model.pkl directly) or "onnx" (runs the
-# exported backend/models/model.onnx, needed only where torch does not fit).
-# "auto" falls back to whichever runtime and model file are actually present.
-ENGINE = os.environ.get("INFERENCE_ENGINE", "torch").lower()
+# Threads used by the forest at predict time. One image at a time does not
+# benefit from fan-out, and the free tier is a shared single CPU.
+N_JOBS = int(os.environ.get("N_JOBS", "1"))
 
 MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", 10 * 1024 * 1024))
 
@@ -40,14 +41,17 @@ ALLOWED_ORIGINS = [
 def load_labels() -> dict:
     with open(BASE_DIR / "labels.json", encoding="utf-8") as f:
         data = json.load(f)
-    classes = data["classes"]
     pre = data.get("preprocessing", {})
     return {
-        "classes": classes,
+        "classes": data["classes"],
         "input_size": int(pre.get("input_size", 128)),
-        "mean": pre.get("mean", [0.0, 0.0, 0.0]),
-        "std": pre.get("std", [1.0, 1.0, 1.0]),
+        "channel_order": str(pre.get("channel_order", "bgr")).lower(),
     }
+
+
+# Env var wins so the histogram channel order can be flipped without a redeploy
+# of the labels file; otherwise labels.json decides.
+CHANNEL_ORDER = os.environ.get("CHANNEL_ORDER", "").lower() or _default_channel_order()
 
 
 def first_existing(paths):

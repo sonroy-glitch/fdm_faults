@@ -92,13 +92,18 @@ def create_app() -> Flask:
             status="ok",
             model_loaded=True,
             engine=engine.name,
-            num_classes=len(load_labels()["classes"]),
+            n_estimators=len(getattr(engine.model, "estimators_", []) or []),
+            n_features=getattr(engine.model, "n_features_in_", None),
+            num_classes=len(inference.class_names()),
         )
 
     @app.get("/classes")
     def classes():
         meta = load_labels()
-        return jsonify(classes=meta["classes"], input_size=meta["input_size"])
+        return jsonify(
+            classes=inference.class_names(),
+            input_size=meta["input_size"],
+        )
 
     @app.post("/predict")
     def predict():

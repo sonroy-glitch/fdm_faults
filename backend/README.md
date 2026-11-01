@@ -1,78 +1,69 @@
 # FDM fault classifier — API
 
-Flask service wrapping the CNN in `../models/model.pkl`.
+Flask service wrapping the RandomForest in `../models/model.pkl`.
 
 ## The model
 
-Recovered from the checkpoint (it is a plain `pickle.dump` of an
-`nn.Module`, so `model_def.py` redefines the class and aliases it onto
-`__main__` to make it loadable):
+`model.pkl` is a pickled dict:
+
+```python
+{"model": RandomForestClassifier(...), "label_map": {...}, "img_size": 128}
+```
 
 | | |
 |---|---|
-| Input | RGB, **128 × 128**, scaled to 0–1 |
-| Body | 4 × (Conv 3×3 `same` → ReLU → BatchNorm → MaxPool 2×2), 32 → 256 ch |
-| Head | Flatten(16384) → 128 → 64 → **5** |
+| Estimator | `RandomForestClassifier`, 300 trees, `class_weight="balanced"` |
+| Input | RGB image, resized to **128 × 128** |
+| Features | **2276** engineered features (not raw pixels) |
+| Classes | 5, ordered by the embedded `label_map` |
+| Trained with | scikit-learn **1.7.1** |
 
-The 16384-unit flatten (256 × 8 × 8) after four halvings is what pins the
-input size at 128.
+The `label_map` inside the pickle is treated as authoritative for class order
+and is cross-checked against `labels.json` at load time.
 
-## Inference engines
+## Feature extraction (`features.py`)
 
-`inference.py` can run the model two ways, chosen by `INFERENCE_ENGINE`:
+This is the part that must match training exactly — the forest takes a 2276-dim
+vector, and 2276 decomposes uniquely:
 
-- **`torch`** (default) — unpickles `models/model.pkl` and runs it directly.
-  This is the deployed path on Render. Install `requirements.txt`.
-- **`onnx`** — runs `backend/models/model.onnx`, exported from the pickle and
-  verified to match it to ~1e-6. Install `requirements-onnx.txt`. This is the
-  only engine small enough for a Vercel serverless function; torch unpacks to
-  ~800 MB against a 250 MB limit.
+| Slice | Length | Content |
+|---|---|---|
+| `[0:1764]` | 1764 | HOG — 9 orientations, 16×16 px/cell, 2×2 cells/block, L2-Hys, on 128×128 grayscale (7·7 blocks × 2·2 cells × 9) |
+| `[1764:2276]` | 512 | 8×8×8 joint colour histogram, L2-normalised |
 
-`auto` tries torch, then ONNX.
+The split is this way round, not the reverse, because **all 258 of the model's
+zero-importance features fall inside `[1764:2276]`** — which is what empty
+colour-histogram bins look like. The HOG block has none.
 
-Measured on the torch path: ~213 MB resident in the gunicorn worker (~240 MB
-with the master), against the 512 MB Render free-tier limit. Thread counts are
-pinned to 1 (`OMP_NUM_THREADS`, `MKL_NUM_THREADS`, and `torch.set_num_threads`)
-because extra BLAS threads cost memory without helping a model this small.
+### The one ambiguous setting
 
-Re-export after retraining:
+`CHANNEL_ORDER` decides how the colour histogram bins channels:
 
-```bash
-pip install -r requirements-dev.txt
-python scripts/export_onnx.py   # writes backend/models/model.onnx, checks parity
-```
+- `bgr` (default) — matches an OpenCV pipeline (`cv2.imread` → `cv2.calcHist`)
+- `rgb` — matches a PIL / skimage pipeline
 
-`backend/models/model.onnx` is committed on purpose — it must be inside the
-deploy root to be bundled.
-
-## Class labels
-
-`labels.json` is the single source of truth. **Index order must match the
-training label order.** Edit `classes` there and both API and UI follow; no
-code changes.
-
-It also holds the preprocessing constants (`input_size`, `mean`, `std`). The
-defaults assume plain 0–1 rescaling; if the model was trained with normalised
-inputs, set `mean`/`std` to match or accuracy will quietly suffer.
+It affects only the 512-value histogram block; grayscale/HOG is unaffected
+either way. If predictions look systematically wrong on known images, flip this
+first — it is an env var, no code change.
 
 ## API
 
 | Route | Method | Purpose |
 |---|---|---|
-| `/health` | GET | 200 only if the model actually loaded, else 503 |
+| `/health` | GET | 200 only if the forest actually loaded, else 503; reports tree and feature counts |
 | `/classes` | GET | Class list and expected input size |
 | `/predict` | POST | Classify one image |
 
 `/predict` accepts multipart (`file` or `image`), JSON (`{"image": "<base64 or data URL>"}`),
-or a raw image body. Response:
+or a raw image body:
 
 ```json
 {
-  "prediction": "Stringing",
-  "confidence": 0.998,
-  "probabilities": [{ "label": "Stringing", "confidence": 0.998 }],
-  "engine": "onnx",
-  "latency_ms": 7.2
+  "prediction": "Warping",
+  "confidence": 0.323,
+  "probabilities": [{ "label": "Warping", "confidence": 0.323 }],
+  "engine": "randomforest",
+  "latency_ms": 10.2
 }
 ```
 
@@ -80,6 +71,9 @@ or a raw image body. Response:
 
 ```bash
 pip install -r requirements.txt
+```
+
+```bash
 gunicorn app:app --bind 127.0.0.1:5000
 ```
 
@@ -87,19 +81,14 @@ gunicorn app:app --bind 127.0.0.1:5000
 curl -F "file=@print.jpg" http://127.0.0.1:5000/predict
 ```
 
-## Deploy
-
-Both targets use **`backend/` as the project root**, which is what makes the
-flat `requirements.txt` resolve.
-
-### Render (the deployed backend)
+## Deploy to Render
 
 `render.yaml` is a blueprint — point Render at the repo and it reads everything
-below automatically. To fill the dashboard by hand instead:
+below. To fill the dashboard by hand instead:
 
 | Field | Value |
 |---|---|
-| Language / runtime | `Python 3` |
+| Language | `Python 3` |
 | Root directory | `backend` |
 | Build command | `pip install -r requirements.txt` |
 | Start command | `gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 2 --timeout 120` |
@@ -111,48 +100,19 @@ Environment variables:
 | Key | Value |
 |---|---|
 | `PYTHON_VERSION` | `3.11.9` |
-| `INFERENCE_ENGINE` | `torch` |
+| `N_JOBS` | `1` |
 | `OMP_NUM_THREADS` | `1` |
-| `MKL_NUM_THREADS` | `1` |
+| `CHANNEL_ORDER` | `bgr` |
 | `ALLOWED_ORIGINS` | the frontend origin, or `*` |
 
-`models/model.pkl` lives at the repo root, one level above `rootDir`. That is
-fine: `config.py` resolves it from `__file__`, not the working directory.
+`models/model.pkl` sits at the repo root, one level above `rootDir`. That is
+fine — `config.py` resolves it from `__file__`, not the working directory.
 
-Free instances sleep after ~15 minutes idle, and a cold start has to import
-torch and unpickle the model, so the first request can take 30-60 s. The
-frontend already allows for this.
+Measured: ~180 MB resident against the 512 MB free-tier limit, ~12 ms per warm
+prediction. The forest is pickled with `n_jobs=-1`, which would fan out across
+every core; `N_JOBS=1` pins it, since a single image gains nothing from
+fan-out on a shared CPU.
 
-### Vercel
-
-Optional — the backend is deployed on Render. Vercel is only viable with
-`INFERENCE_ENGINE=onnx` and `requirements-onnx.txt`, since torch cannot fit.
-
-Root directory **must** be `backend`. `vercel.json` routes every path to
-`api/index.py` and bundles `models/**` with the function.
-
-Three things this setup gets right, each of which broke a deploy:
-
-1. Dependencies are read from `requirements.txt` at the **deploy root**, not
-   from one next to the entrypoint.
-2. `.vercelignore` patterns are gitignore-style — a bare `requirements.txt`
-   matches at *every* depth and will silently exclude the function's
-   dependency file. The entries here are anchored with a leading `/`.
-3. A rewrite **replaces** the request path, so a destination of `/api/index`
-   hands Flask that literal path and every route 404s. The rewrite therefore
-   keeps the real path as a suffix:
-
-   ```json
-   { "source": "/(.*)", "destination": "/api/index/$1" }
-   ```
-
-   and `create_app()` in `app.py` installs a small WSGI middleware that strips
-   the `/api/index` prefix before routing. It lives in the factory, not in
-   `api/index.py`, so it applies whichever entrypoint loads the app, and it is
-   a no-op when no prefix is present — Render and local runs are unaffected.
-
-   A 404 from this service reports `routed_path`, `raw_path` and
-   `stripped_prefix`, so a path mismatch says what it saw rather than needing
-   a log hunt.
-
-Set `ALLOWED_ORIGINS` to the frontend origin on whichever host you keep.
+**Do not float the scikit-learn pin.** Unpickling under a different minor
+version raises `InconsistentVersionWarning` and is not guaranteed to score
+identically.

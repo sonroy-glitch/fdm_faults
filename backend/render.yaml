@@ -5,21 +5,23 @@ services:
     plan: free
     rootDir: backend
     buildCommand: pip install -r requirements.txt
-    # One worker, two threads: the free tier has 512 MB and torch alone accounts
-    # for most of the ~270 MB working set, so extra workers would each reload it.
+    # One worker: the unpickled forest is the bulk of the working set and each
+    # worker would hold its own copy.
     startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 2 --timeout 120
     healthCheckPath: /health
     envVars:
       - key: PYTHON_VERSION
         value: "3.11.9"
-      - key: INFERENCE_ENGINE
-        value: torch
-      # Keep BLAS from spawning a thread per core; saves memory and avoids
-      # oversubscribing the shared free-tier CPU.
+      # The forest is pickled with n_jobs=-1; keep it to one thread on the
+      # shared free-tier CPU.
+      - key: N_JOBS
+        value: "1"
       - key: OMP_NUM_THREADS
         value: "1"
-      - key: MKL_NUM_THREADS
-        value: "1"
+      # "bgr" matches an OpenCV training pipeline, "rgb" a PIL/skimage one.
+      # Only affects the colour-histogram block of the feature vector.
+      - key: CHANNEL_ORDER
+        value: bgr
       # Replace with the deployed frontend origin once it exists.
       - key: ALLOWED_ORIGINS
         value: "*"

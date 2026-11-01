@@ -11,8 +11,8 @@ export default function Home() {
           Print fault classifier
         </h1>
         <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted">
-          Upload a photo of a print. A convolutional network scores it against
-          five known failure modes and reports the confidence for each.
+          Upload a photo of a print. A random forest scores it against five
+          known failure modes and reports the confidence for each.
         </p>
       </header>
 
