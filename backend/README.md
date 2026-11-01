@@ -112,8 +112,13 @@ Three things this setup gets right, each of which broke a deploy:
    { "source": "/(.*)", "destination": "/api/index/$1" }
    ```
 
-   and `api/index.py` wraps the app in a small WSGI middleware that strips the
-   `/api/index` prefix before routing. The middleware is a no-op when the
-   prefix is absent, so the same code serves Render and local runs unchanged.
+   and `create_app()` in `app.py` installs a small WSGI middleware that strips
+   the `/api/index` prefix before routing. It lives in the factory, not in
+   `api/index.py`, so it applies whichever entrypoint loads the app, and it is
+   a no-op when no prefix is present — Render and local runs are unaffected.
+
+   A 404 from this service reports `routed_path`, `raw_path` and
+   `stripped_prefix`, so a path mismatch says what it saw rather than needing
+   a log hunt.
 
 Set `ALLOWED_ORIGINS` to the frontend origin on whichever host you keep.

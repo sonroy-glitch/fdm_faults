@@ -11,6 +11,35 @@ from config import load_labels
 
 ALLOWED_MIME_PREFIX = "image/"
 
+# Vercel rewrites every request to the serverless function, and a rewrite
+# REPLACES the path rather than passing the original through. vercel.json keeps
+# the real path as a suffix ("/health" -> "/api/index/health"); this strips the
+# mount prefix back off before routing. It lives in the factory rather than in
+# api/index.py so it applies no matter which entrypoint loads the app.
+MOUNT_PREFIXES = ("/api/index", "/api")
+
+
+class StripMountPrefix:
+    """Undo a serverless mount prefix so Flask sees the client's real path.
+
+    A no-op when no prefix is present, so gunicorn and local runs are unaffected.
+    """
+
+    def __init__(self, wsgi_app, prefixes):
+        self.wsgi_app = wsgi_app
+        self.prefixes = prefixes
+
+    def __call__(self, environ, start_response):
+        path = environ.get("PATH_INFO", "")
+        for prefix in self.prefixes:
+            if path == prefix or path.startswith(prefix + "/"):
+                # SCRIPT_NAME is deliberately left alone: the public URL has no
+                # prefix, so setting it would corrupt any generated URL.
+                environ["PATH_INFO"] = path[len(prefix):] or "/"
+                environ["fdm.stripped_prefix"] = prefix
+                break
+        return self.wsgi_app(environ, start_response)
+
 
 def create_app() -> Flask:
     app = Flask(__name__)
@@ -23,11 +52,30 @@ def create_app() -> Flask:
         allow_headers=["Content-Type"],
     )
 
+    app.wsgi_app = StripMountPrefix(app.wsgi_app, MOUNT_PREFIXES)
+
     @app.get("/")
     def root():
         return jsonify(
             service="fdm-fault-classifier",
             endpoints=["/health", "/classes", "/predict"],
+        )
+
+    @app.errorhandler(404)
+    def not_found(_):
+        # Reports the path actually routed, plus any prefix the middleware
+        # removed, so a serverless path mismatch is self-diagnosing.
+        return (
+            jsonify(
+                error="no such route",
+                routed_path=request.path,
+                raw_path=request.environ.get("RAW_URI")
+                or request.environ.get("REQUEST_URI")
+                or request.path,
+                stripped_prefix=request.environ.get("fdm.stripped_prefix"),
+                endpoints=["/", "/health", "/classes", "/predict"],
+            ),
+            404,
         )
 
     @app.get("/health")
