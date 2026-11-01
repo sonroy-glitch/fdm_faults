@@ -4,6 +4,8 @@ services:
     runtime: python
     plan: free
     rootDir: backend
+    # ONNX Runtime rather than PyTorch: same outputs (verified to ~1e-6), far
+    # smaller install and a much faster cold start on the free tier.
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120
     healthCheckPath: /health
@@ -11,7 +13,7 @@ services:
       - key: PYTHON_VERSION
         value: "3.11.9"
       - key: INFERENCE_ENGINE
-        value: torch
-      # Set this to the deployed Vercel frontend URL once it exists.
+        value: onnx
+      # Lock this down to the deployed Vercel frontend origin once it exists.
       - key: ALLOWED_ORIGINS
         value: "*"

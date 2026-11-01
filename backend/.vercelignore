@@ -1,6 +1,10 @@
-# Keep the torch checkpoint out of the serverless bundle; only the ONNX graph ships.
-models/model.pkl
-requirements.txt
-requirements-dev.txt
-scripts/
+# Leading slashes anchor these to the deploy root. A bare pattern such as
+# "requirements.txt" would match at EVERY depth, which previously hid the
+# function's own dependency file and broke the build.
+/requirements-torch.txt
+/requirements-dev.txt
+/render.yaml
+/Procfile
+/scripts/
 __pycache__/
+*.pyc

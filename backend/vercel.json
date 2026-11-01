@@ -1,16 +1,12 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "builds": [
-    {
-      "src": "api/index.py",
-      "use": "@vercel/python",
-      "config": {
-        "maxLambdaSize": "250mb",
-        "includeFiles": "{models/**,labels.json,app.py,config.py,inference.py,model_def.py}"
-      }
+  "functions": {
+    "api/index.py": {
+      "maxDuration": 60,
+      "includeFiles": "{models/**,*.py,labels.json}"
     }
-  ],
-  "routes": [{ "src": "/(.*)", "dest": "api/index.py" }],
+  },
+  "rewrites": [{ "source": "/(.*)", "destination": "/api/index" }],
   "env": {
     "INFERENCE_ENGINE": "onnx"
   }
