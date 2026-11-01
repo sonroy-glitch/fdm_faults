@@ -97,12 +97,23 @@ Free instances sleep, so the first request after idling can take ~50 s.
 Root directory **must** be `backend`. `vercel.json` routes every path to
 `api/index.py` and bundles `models/**` with the function.
 
-Two things this setup gets right, both of which broke a previous deploy:
+Three things this setup gets right, each of which broke a deploy:
 
 1. Dependencies are read from `requirements.txt` at the **deploy root**, not
    from one next to the entrypoint.
 2. `.vercelignore` patterns are gitignore-style — a bare `requirements.txt`
    matches at *every* depth and will silently exclude the function's
    dependency file. The entries here are anchored with a leading `/`.
+3. A rewrite **replaces** the request path, so a destination of `/api/index`
+   hands Flask that literal path and every route 404s. The rewrite therefore
+   keeps the real path as a suffix:
+
+   ```json
+   { "source": "/(.*)", "destination": "/api/index/$1" }
+   ```
+
+   and `api/index.py` wraps the app in a small WSGI middleware that strips the
+   `/api/index` prefix before routing. The middleware is a no-op when the
+   prefix is absent, so the same code serves Render and local runs unchanged.
 
 Set `ALLOWED_ORIGINS` to the frontend origin on whichever host you keep.

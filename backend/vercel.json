@@ -6,7 +6,9 @@
       "includeFiles": "{models/**,*.py,labels.json}"
     }
   },
-  "rewrites": [{ "source": "/(.*)", "destination": "/api/index" }],
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/api/index/$1" }
+  ],
   "env": {
     "INFERENCE_ENGINE": "onnx"
   }
