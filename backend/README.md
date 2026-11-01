@@ -21,12 +21,19 @@ input size at 128.
 
 `inference.py` can run the model two ways, chosen by `INFERENCE_ENGINE`:
 
-- **`onnx`** (default, used on both Render and Vercel) — `backend/models/model.onnx`,
-  exported from the pickle and verified to match it to ~1e-6.
-- **`torch`** — loads `models/model.pkl` directly. Needs `requirements-torch.txt`.
-  Will **not** fit in a Vercel function (torch unpacks to ~800 MB vs. a 250 MB limit).
+- **`torch`** (default) — unpickles `models/model.pkl` and runs it directly.
+  This is the deployed path on Render. Install `requirements.txt`.
+- **`onnx`** — runs `backend/models/model.onnx`, exported from the pickle and
+  verified to match it to ~1e-6. Install `requirements-onnx.txt`. This is the
+  only engine small enough for a Vercel serverless function; torch unpacks to
+  ~800 MB against a 250 MB limit.
 
-`auto` tries ONNX, then torch.
+`auto` tries torch, then ONNX.
+
+Measured on the torch path: ~213 MB resident in the gunicorn worker (~240 MB
+with the master), against the 512 MB Render free-tier limit. Thread counts are
+pinned to 1 (`OMP_NUM_THREADS`, `MKL_NUM_THREADS`, and `torch.set_num_threads`)
+because extra BLAS threads cost memory without helping a model this small.
 
 Re-export after retraining:
 
@@ -85,14 +92,41 @@ curl -F "file=@print.jpg" http://127.0.0.1:5000/predict
 Both targets use **`backend/` as the project root**, which is what makes the
 flat `requirements.txt` resolve.
 
-### Render
+### Render (the deployed backend)
 
-`render.yaml` is a blueprint — point Render at the repo and it reads it. Or set
-it manually: root directory `backend`, build `pip install -r requirements.txt`,
-start `gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120`.
-Free instances sleep, so the first request after idling can take ~50 s.
+`render.yaml` is a blueprint — point Render at the repo and it reads everything
+below automatically. To fill the dashboard by hand instead:
+
+| Field | Value |
+|---|---|
+| Language / runtime | `Python 3` |
+| Root directory | `backend` |
+| Build command | `pip install -r requirements.txt` |
+| Start command | `gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 2 --timeout 120` |
+| Health check path | `/health` |
+| Instance type | `Free` |
+
+Environment variables:
+
+| Key | Value |
+|---|---|
+| `PYTHON_VERSION` | `3.11.9` |
+| `INFERENCE_ENGINE` | `torch` |
+| `OMP_NUM_THREADS` | `1` |
+| `MKL_NUM_THREADS` | `1` |
+| `ALLOWED_ORIGINS` | the frontend origin, or `*` |
+
+`models/model.pkl` lives at the repo root, one level above `rootDir`. That is
+fine: `config.py` resolves it from `__file__`, not the working directory.
+
+Free instances sleep after ~15 minutes idle, and a cold start has to import
+torch and unpickle the model, so the first request can take 30-60 s. The
+frontend already allows for this.
 
 ### Vercel
+
+Optional — the backend is deployed on Render. Vercel is only viable with
+`INFERENCE_ENGINE=onnx` and `requirements-onnx.txt`, since torch cannot fit.
 
 Root directory **must** be `backend`. `vercel.json` routes every path to
 `api/index.py` and bundles `models/**` with the function.

@@ -25,16 +25,18 @@ Both projects set their **root directory** to the relevant subfolder.
 
 | Piece | Host | Root | Notes |
 |---|---|---|---|
-| API | Render | `backend` | `render.yaml` blueprint; free tier sleeps |
-| API | Vercel | `backend` | `vercel.json`; runs on ONNX Runtime |
-| UI | Vercel | `frontend` | set `BACKEND_URL` |
+| API | **Render** | `backend` | `render.yaml` blueprint; runs `model.pkl` under PyTorch |
+| UI | **Vercel** | `frontend` | set `BACKEND_URL` to the Render URL |
 
 Deploy the API first, then give the frontend its URL via `BACKEND_URL`.
 
-PyTorch cannot run in a Vercel function (~800 MB unpacked against a 250 MB
-limit), so the service runs the model through ONNX Runtime by default on both
-hosts. The exported graph is verified against the original checkpoint to ~1e-6.
-See `backend/README.md`.
+The API serves `models/model.pkl` directly with PyTorch. Measured footprint is
+~240 MB against Render's 512 MB free-tier limit. Free instances sleep, so the
+first request after idle can take 30-60 s.
+
+An ONNX path (`INFERENCE_ENGINE=onnx`, `requirements-onnx.txt`) is kept as a
+fallback and is the only way to fit the API in a Vercel serverless function,
+where torch is far past the 250 MB limit. See `backend/README.md`.
 
 ## Before you trust the output
 

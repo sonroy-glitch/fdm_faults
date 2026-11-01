@@ -1,15 +1,16 @@
-# Serving dependencies for BOTH deploy targets (Vercel and Render).
+# Default serving stack: PyTorch, running models/model.pkl directly.
 #
-# Inference runs on ONNX Runtime, not PyTorch: a torch install unpacks to
-# ~800 MB, far past Vercel's 250 MB serverless limit, and it would also make
-# Render's cold start much slower. backend/models/model.onnx is exported from
-# models/model.pkl by scripts/export_onnx.py and matches it to ~1e-6.
+# The CPU wheel index keeps torch ~200 MB instead of ~2 GB (the default wheel
+# bundles CUDA). Measured peak RSS serving requests is ~270 MB, inside the
+# 512 MB Render free-tier limit.
 #
-# To serve the .pkl with PyTorch instead, use requirements-torch.txt and set
-# INFERENCE_ENGINE=torch.
+# This will NOT fit in a Vercel serverless function (250 MB limit) -- see
+# requirements-onnx.txt for that path.
+--extra-index-url https://download.pytorch.org/whl/cpu
+
 Flask==3.1.0
 flask-cors==5.0.0
 gunicorn==23.0.0
 numpy==2.1.3
-onnxruntime==1.20.1
 pillow==11.0.0
+torch==2.5.1

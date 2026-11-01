@@ -1,4 +1,4 @@
-# Local tooling: everything needed to run the ONNX export in scripts/.
--r requirements-torch.txt
+# Local tooling: the torch stack plus what scripts/export_onnx.py needs.
+-r requirements.txt
 onnx==1.17.0
 onnxruntime==1.20.1

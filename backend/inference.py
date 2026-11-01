@@ -5,6 +5,7 @@ deployment stays small enough for a serverless function.
 """
 
 import io
+import os
 import threading
 
 import numpy as np
@@ -45,6 +46,10 @@ class TorchEngine:
         import torch
 
         import model_def
+
+        # One thread: the model is small, and on a shared 512 MB free-tier
+        # instance extra BLAS threads cost memory without helping latency.
+        torch.set_num_threads(int(os.environ.get("TORCH_NUM_THREADS", "1")))
 
         model_def.register_for_unpickling()
         with open(model_path, "rb") as f:
@@ -96,7 +101,8 @@ def _build_engine():
     elif requested == "torch":
         order = [("torch", torch_path)]
     else:
-        order = [("onnx", onnx_path), ("torch", torch_path)]
+        # torch first: the pickle is the source of truth, ONNX is the fallback.
+        order = [("torch", torch_path), ("onnx", onnx_path)]
 
     errors = []
     for kind, path in order:

@@ -22,10 +22,10 @@ ONNX_SEARCH_PATHS = [
     REPO_DIR / "models" / "model.onnx",
 ]
 
-# "torch" (Render / local) or "onnx" (Vercel). "auto" prefers whichever runtime
-# and model file are actually available, trying onnx first because that is the
-# lighter deployment.
-ENGINE = os.environ.get("INFERENCE_ENGINE", "auto").lower()
+# "torch" (the default: runs models/model.pkl directly) or "onnx" (runs the
+# exported backend/models/model.onnx, needed only where torch does not fit).
+# "auto" falls back to whichever runtime and model file are actually present.
+ENGINE = os.environ.get("INFERENCE_ENGINE", "torch").lower()
 
 MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", 10 * 1024 * 1024))
 

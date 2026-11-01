@@ -1,0 +1,9 @@
+# Alternative serving stack: ONNX Runtime against backend/models/model.onnx.
+# Much smaller and the only option that fits a Vercel serverless function.
+# Pair with INFERENCE_ENGINE=onnx.
+Flask==3.1.0
+flask-cors==5.0.0
+gunicorn==23.0.0
+numpy==2.1.3
+onnxruntime==1.20.1
+pillow==11.0.0

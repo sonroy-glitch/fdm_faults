@@ -4,16 +4,22 @@ services:
     runtime: python
     plan: free
     rootDir: backend
-    # ONNX Runtime rather than PyTorch: same outputs (verified to ~1e-6), far
-    # smaller install and a much faster cold start on the free tier.
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120
+    # One worker, two threads: the free tier has 512 MB and torch alone accounts
+    # for most of the ~270 MB working set, so extra workers would each reload it.
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 2 --timeout 120
     healthCheckPath: /health
     envVars:
       - key: PYTHON_VERSION
         value: "3.11.9"
       - key: INFERENCE_ENGINE
-        value: onnx
-      # Lock this down to the deployed Vercel frontend origin once it exists.
+        value: torch
+      # Keep BLAS from spawning a thread per core; saves memory and avoids
+      # oversubscribing the shared free-tier CPU.
+      - key: OMP_NUM_THREADS
+        value: "1"
+      - key: MKL_NUM_THREADS
+        value: "1"
+      # Replace with the deployed frontend origin once it exists.
       - key: ALLOWED_ORIGINS
         value: "*"
